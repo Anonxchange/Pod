@@ -9,7 +9,10 @@ import { useEvmWalletData } from "@/hooks/use-evm-wallet-data";
 import { CoinIcon } from "@/components/trading/CoinIcon";
 import { ArrowDownToLine, ExternalLink, RefreshCw, Send, Wallet } from "@/lib/icons";
 
-function explorerUrl(chainId: number, value: string) {
+function explorerUrl(namespace: string, chainId: number, value: string) {
+  if (namespace === "solana") return `https://solscan.io/account/${value}`;
+  if (namespace === "bitcoin") return `https://mempool.space/address/${value}`;
+  if (namespace === "tron") return `https://tronscan.org/#/address/${value}`;
   const hosts: Record<number, string> = {
     1: "https://etherscan.io", 10: "https://optimistic.etherscan.io", 56: "https://bscscan.com",
     137: "https://polygonscan.com", 42161: "https://arbiscan.io", 8453: "https://basescan.org",
@@ -24,13 +27,14 @@ export function AssetList({ onSend, onReceive }: { onSend?: (symbol: string) => 
   const { assets, isLoading, error, refetch } = useEvmWalletData();
   const [hideZero, setHideZero] = useState(false);
   const visibleAssets = useMemo(() => hideZero ? assets.filter((asset) => asset.balance > 0) : assets, [assets, hideZero]);
+  const isAnyConnected = wallet.isAnyConnected ?? wallet.isConnected;
 
-  if (!wallet.isConnected) {
+  if (!isAnyConnected) {
     return (
       <div className="rounded-xl border border-dashed border-[#d6e0d0] bg-[#fbfcf8] px-5 py-10 text-center">
         <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-[#eef5e6] text-[#557a3f]"><Wallet className="h-5 w-5" /></div>
-        <h3 className="font-bold">Your assets will appear here</h3>
-        <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">Connect a wallet to read balances directly from the blockchain.</p>
+        <h3 className="font-bold">Connect to see your assets</h3>
+        <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">Balances from connected EVM, Bitcoin, Solana, and TRON accounts appear here when available.</p>
       </div>
     );
   }
@@ -40,7 +44,7 @@ export function AssetList({ onSend, onReceive }: { onSend?: (symbol: string) => 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="font-bold">Wallet assets</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{wallet.chainName || `Chain ${wallet.chainId ?? ""}`} · live on-chain data</p>
+          <p className="mt-1 text-xs text-muted-foreground">Live balances across connected networks</p>
         </div>
         <div className="flex items-center justify-between gap-4 sm:justify-end">
           <div className="flex items-center gap-2">
@@ -76,18 +80,24 @@ export function AssetList({ onSend, onReceive }: { onSend?: (symbol: string) => 
               </TableCell></TableRow>
             ) : visibleAssets.length === 0 ? (
               <TableRow><TableCell colSpan={4} className="py-12 text-center">
-                <p className="font-semibold">No assets on this network</p>
-                <p className="mt-1 text-sm text-muted-foreground">Try another supported network or receive an asset.</p>
+                <p className="font-semibold">No supported assets found</p>
+                <p className="mt-1 text-sm text-muted-foreground">{hideZero ? "No non-zero balances were found. Show zero balances or refresh to check again." : "No balances were returned for the connected accounts yet."}</p>
                 {onReceive && <Button variant="outline" size="sm" className="mt-4 gap-2" onClick={onReceive}><ArrowDownToLine className="h-4 w-4" />Receive</Button>}
               </TableCell></TableRow>
             ) : visibleAssets.map((asset) => {
-              const explorer = wallet.address ? explorerUrl(asset.chainId, wallet.address) : undefined;
+              const namespace = asset.namespace ?? "eip155";
+              const accountAddress = asset.address ?? (namespace === "eip155" ? wallet.address : undefined);
+              const explorer = accountAddress
+                ? explorerUrl(namespace, asset.chainId, accountAddress)
+                : undefined;
+              const canSend = namespace === "eip155" && wallet.isConnected && !!onSend;
+              const networkName = asset.network ?? asset.chainName;
               return (
                 <TableRow key={asset.id} data-testid={`row-asset-${asset.id}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <CoinIcon symbol={asset.symbol.toUpperCase()} className="h-9 w-9" />
-                      <div className="min-w-0"><div className="truncate font-semibold">{asset.name}</div><div className="text-xs text-muted-foreground">{asset.symbol.toUpperCase()} · {asset.chainName}</div></div>
+                       <div className="min-w-0"><div className="truncate font-semibold">{asset.name}</div><div className="text-xs text-muted-foreground">{asset.symbol.toUpperCase()} · {networkName}</div>{accountAddress && <div className="truncate font-mono text-[10px] text-muted-foreground/80">{accountAddress.slice(0, 7)}…{accountAddress.slice(-5)}</div>}</div>
                     </div>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell font-medium">{asset.usdPrice == null ? "—" : `$${asset.usdPrice.toLocaleString("en-US", { maximumFractionDigits: 6 })}`}</TableCell>
@@ -99,7 +109,7 @@ export function AssetList({ onSend, onReceive }: { onSend?: (symbol: string) => 
                     <div className="inline-flex items-center gap-1">
                       {explorer && <Button asChild variant="ghost" size="icon" className="h-8 w-8" title="View address on block explorer"><a href={explorer} target="_blank" rel="noreferrer" aria-label="View on block explorer"><ExternalLink className="h-4 w-4" /></a></Button>}
                       {onReceive && <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Receive ${asset.symbol}`} onClick={onReceive}><ArrowDownToLine className="h-4 w-4" /></Button>}
-                      {onSend && <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Send ${asset.symbol}`} onClick={() => onSend(asset.symbol)}><Send className="h-4 w-4" /></Button>}
+                      {canSend && <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={`Send ${asset.symbol}`} onClick={() => onSend(asset.symbol)}><Send className="h-4 w-4" /></Button>}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -108,7 +118,7 @@ export function AssetList({ onSend, onReceive }: { onSend?: (symbol: string) => 
           </TableBody>
         </Table>
       </div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">Balances are read-only estimates from the connected chain. Always verify network and recipient in your wallet before approving a transaction.</p>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">Balances are read-only data reported for connected accounts. Sending is available only for supported EVM assets; non-EVM assets are view-only here.</p>
     </div>
   );
 }
